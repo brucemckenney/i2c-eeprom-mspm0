@@ -24,7 +24,8 @@ typedef struct _eep_params
     I2C_Regs *ep_i2c;
     uint8_t ep_i2c_addr;    // Target (EEPROM) I2C address
 }eep_params;
-eep_params eep_param, *eep;
+eep_params eep_param;
+eep_params * const eep = &eep_param;
 
 #if ERRCNT
 uint32_t eep_errcnt;
@@ -39,7 +40,6 @@ uint32_t eep_idlewait;
 void
 InitI2C(I2C_Regs *i2cdev, unsigned char eeprom_i2c_address)
 {
-    eep = &eep_param;
     eep->ep_i2c = i2cdev;
     eep->ep_i2c_addr = eeprom_i2c_address;
 
@@ -143,8 +143,8 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         //  Stuff the EEPROM memory address as a prefix
         EEPROM_SetAddr(eep, addr);
 
+        //  Start the write for this fragment
         eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
-       //  Start the write for this fragment
         DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, sizeof(eep_addr)+fragsiz);  // Start
 
@@ -209,9 +209,9 @@ EEPROM_CurrentAddressRead(void)
     unsigned i;
 
     EEPROM_WaitIdle();
-    eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
 
     //  Start the Rx transaction
+    eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
     DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
         DL_I2C_CONTROLLER_DIRECTION_RX, sizeof(dat));
 #if ETRACE
@@ -253,19 +253,19 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
     unsigned i;
 
     EEPROM_WaitIdle();
-    eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
 
     // Insert the address in the Tx FIFO as a prefix
     EEPROM_SetAddr(eep, Address);
 
     //   Set RD_ON_TXEMPTY so it sends the Tx FIFO data first
-#if RS_WA       // Workaround
+#if RS_WA       // Hazard workaround
     eep->ep_i2c->MASTER.MCTR = I2C_MCTR_RD_ON_TXEMPTY_ENABLE;// Set repeat-start, clear others
 #else // RS_WA
     DL_I2C_enableControllerReadOnTXEmpty(eep->ep_i2c);   // Write then read
 #endif // RS_WA
 
     //   Start the transaction
+    eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
     DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
                               DL_I2C_CONTROLLER_DIRECTION_RX, Size);   // Don't count the Tx FIFO contents
 #if ETRACE
@@ -294,8 +294,8 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
     i = EEPROM_drainRxFIFO(i, Data, Size);
 
     //   We're done with RD_ON_TXEMPTY
-#if RS_WA
-    eep->ep_i2c->MASTER.MCTR = I2C_MCTR_RD_ON_TXEMPTY_DISABLE; // Clear repeat-start, clear others
+#if RS_WA       // Hazard workaround
+    eep->ep_i2c->MASTER.MCTR = 0*I2C_MCTR_RD_ON_TXEMPTY_ENABLE; // Clear repeat-start, clear others
 #else // RS_WA
     DL_I2C_disableControllerReadOnTXEmpty(eep->ep_i2c);
 #endif // RS_WA
@@ -316,9 +316,9 @@ EEPROM_AckPolling(void)
     do
     {
         EEPROM_WaitIdle();
-        eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
         //  Send a 0-byte (Tx) request until it succeeds.
         //  I2C_ERR_01/02 put serious restrictions on a Quick Rx command.
+        eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
         DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, 0);                 // Start
         do
