@@ -24,51 +24,26 @@ main(void)
   EEPROM_ByteWrite(0x0000,0x12);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle
                                             // completion
-#if RB
-  read_val[0] = EEPROM_RandomRead(0x0000);
-  asm volatile(" nop ");
-#endif
 
   EEPROM_ByteWrite(0x0001,0x34);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle
                                             // completion
-#if RB
-  read_val[1] = EEPROM_RandomRead(0x0001);
-  asm volatile(" nop ");
-#endif
                                             // completion
   EEPROM_ByteWrite(0x0002,0x56);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle
                                             // completion
-#if RB
-  read_val[2] = EEPROM_RandomRead(0x0002);
-  asm volatile(" nop ");
-#endif
 
   EEPROM_ByteWrite(0x0003,0x78);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle
                                             // completion
-#if RB
-  read_val[3] = EEPROM_RandomRead(0x0003);
-  asm volatile(" nop ");
-#endif
 
   EEPROM_ByteWrite(0x0004,0x9A);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle
                                             // completion
-#if RB
-  read_val[4] = EEPROM_RandomRead(0x0004);
-  asm volatile(" nop ");
-#endif
 
   EEPROM_ByteWrite(0x0005,0xBC);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle
                                             // completion
-#if RB
-  read_val[5] = EEPROM_RandomRead(0x0005);
-  asm volatile(" nop ");
-#endif
-
 
   read_val[0] = EEPROM_RandomRead(0x0000);  // Read from address 0x0000
   read_val[1] = EEPROM_CurrentAddressRead();// Read from address 0x0001
@@ -89,7 +64,11 @@ main(void)
   // Read out a sequence of data from EEPROM
   EEPROM_SequentialRead(address, read_val , sizeof(read_val));
 
-  while(1)
+  //    Declare victory
+  DL_GPIO_clearPins(GPIO_LEDS_PORT,
+                  GPIO_LEDS_USER_LED_1_PIN | GPIO_LEDS_USER_TEST_PIN);
+
+  while (1)
   {
       __WFI();
   }

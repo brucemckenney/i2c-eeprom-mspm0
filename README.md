@@ -10,6 +10,9 @@ The code relies on DriverLib, but not sysconfig.
 
 Polling  (busy-waiting) is used rather than interrupts. This is because only sysconfig knows the ISR name.
 
+This was tested using a CAT24C512 and an AT24C256. Both of these use 2-byte addresses.
+To use a smaller device, e.g. AT24C02 (1-byte address), change the definitions of eep_addr and EEP_PAGESIZE accordingly.
+
 ## Peripherals & Pin Assignments
 
 | Peripheral | Pin | Function |
@@ -37,15 +40,10 @@ Visit [LP_MSPM0G3507](https://www.ti.com/tool/LP-MSPM0G3507) for LaunchPad infor
 | PA19 | DEBUGSS | SWDIO | N/A | <ul><li>PA19 is used by SWD during debugging<br><ul><li>`J101 13:14 ON` Connect to XDS-110 SWDIO while debugging<br><li>`J101 13:14 OFF` Disconnect from XDS-110 SWDIO if using pin in application</ul></ul> |
 
 ### Device Migration Recommendations
-This project was developed for a superset device included in the LP_MSPM0G3507 LaunchPad. Please
-visit the [CCS User's Guide](https://software-dl.ti.com/msp430/esd/MSPM0-SDK/latest/docs/english/tools/ccs_ide_guide/doc_guide/doc_guide-srcs/ccs_ide_guide.html#sysconfig-project-migration)
-for information about migrating to other MSPM0 devices.
 
-### Low-Power Recommendations
-SysConfig allows developers to easily configure unused pins by selecting **Board**→**Configure Unused Pins**.
+This example was developed using an MSPM0G3507.
 
-For more information about jumper configuration to achieve low-power using the
-MSPM0 LaunchPad, please visit the [LP-MSPM0G3507 User's Guide](https://www.ti.com/lit/slau873).
+The source code should operate unchanged on any of the G, L, or C series; sysconfig may be used to re-target.
 
 ## Example Usage
 
@@ -54,9 +52,3 @@ Note that I2C requires pull-up resistors. Internal pull-ups can be enabled in
 SysConfig (see datasheet for resistance specification), but external pull-ups
 might be required based on I2C speed and capacitance. External pull-ups can be
 connected or enabled using the LaunchPad.
-Compile, load and run the example.
-LED2 will toggle periodically if transmission and reception were successful.
-LED2 will remain off if there is a problem during initialization.
-LED2 will remain on if there is a problem during data transfers.
-USER_TEST_PIN GPIO will mimic the behavior of the LED pin on the BoosterPack
-header and can be used to verify the LED behavior.

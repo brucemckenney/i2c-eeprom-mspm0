@@ -52,9 +52,9 @@ InitI2C(I2C_Regs *i2cdev, unsigned char eeprom_i2c_address)
 //  This should be used after completion is indicated/before starting a new operation.
 //
 static inline void
-EEPROM_WaitIdle()
+EEPROM_WaitIdle(I2C_Regs *i2c)
 {
-    while ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_IDLE) == 0)
+    while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_IDLE) == 0)
     {
         ++eep_idlewait;
     }
@@ -63,19 +63,19 @@ EEPROM_WaitIdle()
 
 ///
 //  EEPROM_SetAddr()
-//  Shorthand: Stuff the EEPROM memory address as a prefix
+//  Shorthand: Stuff the EEPROM memory address into the Tx FIFO as a prefix
 //
 static inline void
-EEPROM_SetAddr(eep_params *eep, unsigned int addr)
+EEPROM_SetAddr(I2C_Regs *i2c, unsigned int addr)
 {
     if (sizeof(eep_addr) > 3)
-        DL_I2C_transmitControllerData(eep->ep_i2c, (addr >> 24) & 0xFF);
+        DL_I2C_transmitControllerData(i2c, (addr >> 24) & 0xFF);
     if (sizeof(eep_addr) > 2)
-        DL_I2C_transmitControllerData(eep->ep_i2c, (addr >> 16) & 0xFF);
+        DL_I2C_transmitControllerData(i2c, (addr >> 16) & 0xFF);
     if (sizeof(eep_addr) > 1)
-        DL_I2C_transmitControllerData(eep->ep_i2c, (addr >> 8) & 0xFF);
+        DL_I2C_transmitControllerData(i2c, (addr >>  8) & 0xFF);
 
-    DL_I2C_transmitControllerData(eep->ep_i2c, (addr >> 0) & 0xFF);
+    DL_I2C_transmitControllerData(i2c, (addr >> 0) & 0xFF);
 
     return;
 }
@@ -85,12 +85,12 @@ EEPROM_SetAddr(eep_params *eep, unsigned int addr)
 //  Useful shorthand to unload the Rx FIFO.
 //
 static inline unsigned
-EEPROM_drainRxFIFO(unsigned i, unsigned char *Data, unsigned Size)
+EEPROM_drainRxFIFO(I2C_Regs *i2c, unsigned i, unsigned char *Data, unsigned Size)
 {
-    while (!DL_I2C_isControllerRXFIFOEmpty(eep->ep_i2c))
+    while (!DL_I2C_isControllerRXFIFOEmpty(i2c))
     {
         uint8_t c;
-        c = DL_I2C_receiveControllerData(eep->ep_i2c);
+        c = DL_I2C_receiveControllerData(i2c);
         if (i < Size)                // Safety first
         {
             Data[i] = c;
@@ -122,6 +122,8 @@ EEPROM_ByteWrite(unsigned int Address , unsigned char Data)
 void
 EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size)
 {
+    I2C_Regs *i2c = eep->ep_i2c;
+
     unsigned cnt = Size;
     unsigned char *ptr = Data;
     eep_addr addr = (eep_addr)Address;  // Wrap address as needed
@@ -138,32 +140,29 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         if (fragsiz > cnt)              // Don't go overboard
             fragsiz = cnt;
         fragcnt = fragsiz;              // Prepare to count
-        EEPROM_WaitIdle();
 
-        //  Stuff the EEPROM memory address as a prefix
-        EEPROM_SetAddr(eep, addr);
+        EEPROM_WaitIdle(i2c);
+
+        //  Stuff the EEPROM memory address into the Tx FIFO as a prefix
+        EEPROM_SetAddr(i2c, addr);
 
         //  Start the write for this fragment
-        eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
-        DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
+        i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+        DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, sizeof(eep_addr)+fragsiz);  // Start
 
         //  Busy-wait for completion
         do {
             // While waiting, try to keep the FIFO full.
             unsigned fillcnt;
-            fillcnt = DL_I2C_fillControllerTXFIFO(eep->ep_i2c, ptr, fragcnt);
+            fillcnt = DL_I2C_fillControllerTXFIFO(i2c, ptr, fragcnt);
             fragcnt -= fillcnt;
             ptr += fillcnt;
-        } while (!(eep->ep_i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MTXDONE_SET));
-        //while ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_BUSY));
+        } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MTXDONE_SET));
+        //while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_BUSY));
 
-        if (fragcnt > 0)        // Glitch test
-        {
-            asm volatile (" nop ");
-        }
 #if ERRCNT
-        if ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
+        if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
         { ++eep_errcnt; }
 #endif // ERRCNT
         //  Move forward
@@ -175,7 +174,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
     } // while (cnt > 0)
 
     //  Only needed in case of an error
-    DL_I2C_flushControllerTXFIFO(eep->ep_i2c);
+    DL_I2C_flushControllerTXFIFO(i2c);
 
     return;
 }
@@ -205,36 +204,38 @@ EEPROM_CurrentAddressRead(void)
 {
     //  Read 1 byte without setting a new address.
     //  There's no reason to limit this to 1 byte, but that's what SLAA208 did.
+    I2C_Regs *i2c = eep->ep_i2c;
     uint8_t dat[1];
     unsigned i;
 
-    EEPROM_WaitIdle();
+    EEPROM_WaitIdle(i2c);
 
     //  Start the Rx transaction
-    eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
-    DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
+    i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+    DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
         DL_I2C_CONTROLLER_DIRECTION_RX, sizeof(dat));
 #if ETRACE
-    eep_car_msr1 = DL_I2C_getControllerStatus(eep->ep_i2c);
+    eep_car_msr1 = DL_I2C_getControllerStatus(i2c);
     delay_cycles(10*32);
-    eep_car_msr2 = DL_I2C_getControllerStatus(eep->ep_i2c);
+    eep_car_msr2 = DL_I2C_getControllerStatus(i2c);
 #endif // ETRACE
 
-    //  Busy-wait for it to complete
+    //  Busy-wait for it to complete. A single byte fits in the FIFO.
     i = 0;
-    do // while ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_BUSY))
+    do // while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_BUSY))
     {
 #if ETRACE
-        eep_car_msr3 = DL_I2C_getControllerStatus(eep->ep_i2c);
+        eep_car_msr3 = DL_I2C_getControllerStatus(i2c);
         delay_cycles(1*32);
 #else
         /*EMPTY*/;
 #endif // ETRACE
-    } while (!(eep->ep_i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MRXDONE_SET));
+    } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MRXDONE_SET));
 
-    i = EEPROM_drainRxFIFO(i, dat, sizeof(dat));
+    //  Retrieve the result
+    i = EEPROM_drainRxFIFO(i2c, i, dat, sizeof(dat));
 #if ERRCNT
-    if ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
+    if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
     { ++eep_errcnt; }
 #endif // ERRCNT
 
@@ -250,82 +251,87 @@ uint32_t eep_sr_msr1, eep_sr_msr2,eep_sr_msr3;
 void
 EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int Size)
 {
+    I2C_Regs *i2c = eep->ep_i2c;
     unsigned i;
 
-    EEPROM_WaitIdle();
+    EEPROM_WaitIdle(i2c);
 
     // Insert the address in the Tx FIFO as a prefix
-    EEPROM_SetAddr(eep, Address);
+    EEPROM_SetAddr(i2c, Address);
 
     //   Set RD_ON_TXEMPTY so it sends the Tx FIFO data first
 #if RS_WA       // Hazard workaround
-    eep->ep_i2c->MASTER.MCTR = I2C_MCTR_RD_ON_TXEMPTY_ENABLE;// Set repeat-start, clear others
+    i2c->MASTER.MCTR = I2C_MCTR_RD_ON_TXEMPTY_ENABLE;// Set repeat-start, clear others
 #else // RS_WA
-    DL_I2C_enableControllerReadOnTXEmpty(eep->ep_i2c);   // Write then read
+    DL_I2C_enableControllerReadOnTXEmpty(i2c);   // Write then read
 #endif // RS_WA
 
     //   Start the transaction
-    eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
-    DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
-                              DL_I2C_CONTROLLER_DIRECTION_RX, Size);   // Don't count the Tx FIFO contents
+    i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+    DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
+                     DL_I2C_CONTROLLER_DIRECTION_RX, Size);   // Don't count the Tx FIFO contents
 #if ETRACE
-    eep_sr_msr1 = DL_I2C_getControllerStatus(eep->ep_i2c);
+    eep_sr_msr1 = DL_I2C_getControllerStatus(i2c);
     delay_cycles(10*32);
-    eep_sr_msr2 = DL_I2C_getControllerStatus(eep->ep_i2c);
+    eep_sr_msr2 = DL_I2C_getControllerStatus(i2c);
 #endif // ETRACE
 
     //   Busy-wait for completion
     i = 0;
     do {
 #if ETRACE
-        eep_sr_msr3 = DL_I2C_getControllerStatus(eep->ep_i2c);
+        eep_sr_msr3 = DL_I2C_getControllerStatus(i2c);
         delay_cycles(1*32);
 #endif // ETRACE
        //   While waiting, drain the Rx FIFO as needed
-       i = EEPROM_drainRxFIFO(i, Data, Size);
-    } while (!(eep->ep_i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MRXDONE_SET));
-    //while ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_BUSY));
+       i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
+    } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MRXDONE_SET));
+    //while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_BUSY));
 #if ERRCNT
-    if ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
+    if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
     { ++eep_errcnt; }
 #endif // ERRCNT
 
     //   One more Rx FIFO check to avoid a race.
-    i = EEPROM_drainRxFIFO(i, Data, Size);
+    i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
 
     //   We're done with RD_ON_TXEMPTY
 #if RS_WA       // Hazard workaround
-    eep->ep_i2c->MASTER.MCTR = 0*I2C_MCTR_RD_ON_TXEMPTY_ENABLE; // Clear repeat-start, clear others
+    i2c->MASTER.MCTR = 0*I2C_MCTR_RD_ON_TXEMPTY_ENABLE; // Clear repeat-start, clear others
 #else // RS_WA
-    DL_I2C_disableControllerReadOnTXEmpty(eep->ep_i2c);
+    DL_I2C_disableControllerReadOnTXEmpty(i2c);
 #endif // RS_WA
 
     //  Only needed in case of an error
-    DL_I2C_flushControllerTXFIFO(eep->ep_i2c);
+    DL_I2C_flushControllerTXFIFO(i2c);
 
     return;
 }
 
 ///
 //  EEPROM_AckPolling()
+//  The EEPROM doesn't respond (NACKs) while it's writing its memory
+//  (Twr, typically <5ms), so just keep poking it until it ACKs.
 //
 void
 EEPROM_AckPolling(void)
 {
+    I2C_Regs *i2c = eep->ep_i2c;
     unsigned OK = 0;
     do
     {
-        EEPROM_WaitIdle();
+        EEPROM_WaitIdle(i2c);
+
         //  Send a 0-byte (Tx) request until it succeeds.
-        //  I2C_ERR_01/02 put serious restrictions on a Quick Rx command.
-        eep->ep_i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
-        DL_I2C_startControllerTransfer(eep->ep_i2c, eep->ep_i2c_addr,
+        //  I2C_ERR_01/02 put serious restrictions on an Rx-mode Quick command.
+        i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+        DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, 0);                 // Start
         do
         {
             /*EMPTY*/;                                          // Busy-wait for completion
-        } while (!(eep->ep_i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MTXDONE_SET));
-        if ((DL_I2C_getControllerStatus(eep->ep_i2c) & DL_I2C_CONTROLLER_STATUS_ERROR) == 0)
+        } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MTXDONE_SET));
+        if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR) == 0)
             {OK = 1;}                                           // No error -> OK
     } while (!OK);
     return;
