@@ -52,3 +52,6 @@ Note that I2C requires pull-up resistors. Internal pull-ups can be enabled in
 SysConfig (see datasheet for resistance specification), but external pull-ups
 might be required based on I2C speed and capacitance. External pull-ups can be
 connected or enabled using the LaunchPad.
+
+## Credits
+The .syscfg and parts of this Readme were adopted from TI example i2c_controller_rw_multibyte_fifo_poll.
