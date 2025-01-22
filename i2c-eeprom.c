@@ -30,11 +30,11 @@ eep_params * const eep = &eep_param;
 #if ERRCNT
 uint32_t eep_errcnt;
 #endif // ERRCNT
-uint32_t eep_idlewait;
+uint32_t eep_idlewait;          // Monitor how long it takes to go IDLE
 
 ///
 //  InitI2C()
-//  i2cdev should point to a configured I2C unit.
+//  i2cdev should point to a configured I2C unit, e.g. from sysconfig.
 //  eeprom_i2c_address should be 7-bits (right-justified).
 //
 void
@@ -147,7 +147,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         EEPROM_SetAddr(i2c, addr);
 
         //  Start the write for this fragment
-        i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+        DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_TX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));
         DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, sizeof(eep_addr)+fragsiz);  // Start
 
@@ -158,8 +158,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
             fillcnt = DL_I2C_fillControllerTXFIFO(i2c, ptr, fragcnt);
             fragcnt -= fillcnt;
             ptr += fillcnt;
-        } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MTXDONE_SET));
-        //while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_BUSY));
+        } while (!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_TX_DONE));
 
 #if ERRCNT
         if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
@@ -211,7 +210,7 @@ EEPROM_CurrentAddressRead(void)
     EEPROM_WaitIdle(i2c);
 
     //  Start the Rx transaction
-    i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+    DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_RX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));// Clear stale
     DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
         DL_I2C_CONTROLLER_DIRECTION_RX, sizeof(dat));
 #if ETRACE
@@ -222,7 +221,7 @@ EEPROM_CurrentAddressRead(void)
 
     //  Busy-wait for it to complete. A single byte fits in the FIFO.
     i = 0;
-    do // while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_BUSY))
+    do
     {
 #if ETRACE
         eep_car_msr3 = DL_I2C_getControllerStatus(i2c);
@@ -230,11 +229,12 @@ EEPROM_CurrentAddressRead(void)
 #else
         /*EMPTY*/;
 #endif // ETRACE
-    } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MRXDONE_SET));
+    } while(!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE));
 
     //  Retrieve the result
     i = EEPROM_drainRxFIFO(i2c, i, dat, sizeof(dat));
-#if ERRCNT
+
+    #if ERRCNT
     if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
     { ++eep_errcnt; }
 #endif // ERRCNT
@@ -267,7 +267,7 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
 #endif // RS_WA
 
     //   Start the transaction
-    i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MRXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+    DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_RX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));// Clear stale
     DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
                      DL_I2C_CONTROLLER_DIRECTION_RX, Size);   // Don't count the Tx FIFO contents
 #if ETRACE
@@ -285,15 +285,15 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
 #endif // ETRACE
        //   While waiting, drain the Rx FIFO as needed
        i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
-    } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MRXDONE_SET));
-    //while ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_BUSY));
-#if ERRCNT
-    if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
-    { ++eep_errcnt; }
-#endif // ERRCNT
+    } while(!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE));
 
     //   One more Rx FIFO check to avoid a race.
     i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
+
+    #if ERRCNT
+    if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
+    { ++eep_errcnt; }
+#endif // ERRCNT
 
     //   We're done with RD_ON_TXEMPTY
 #if RS_WA       // Hazard workaround
@@ -324,15 +324,17 @@ EEPROM_AckPolling(void)
 
         //  Send a 0-byte (Tx) request until it succeeds.
         //  I2C_ERR_01/02 put serious restrictions on an Rx-mode Quick command.
-        i2c->CPU_INT.ICLR = I2C_CPU_INT_ICLR_MTXDONE_CLR | I2C_CPU_INT_ICLR_MNACK_CLR; // Clear stale
+        DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_TX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));
         DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, 0);                 // Start
-        do
-        {
+
+        do {
             /*EMPTY*/;                                          // Busy-wait for completion
-        } while (!(i2c->CPU_INT.RIS & I2C_CPU_INT_RIS_MTXDONE_SET));
+        } while (!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_TX_DONE));
+
         if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR) == 0)
             {OK = 1;}                                           // No error -> OK
     } while (!OK);
+
     return;
 }

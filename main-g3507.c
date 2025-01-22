@@ -1,11 +1,10 @@
 ///
-//  main
+//  main.c
 //
 
 #include "ti_msp_dl_config.h"
 #include "i2c-eeprom.h"
 
-#define RB 0
 #define     SlaveAddress   0x50
 
 unsigned char read_val[150];
