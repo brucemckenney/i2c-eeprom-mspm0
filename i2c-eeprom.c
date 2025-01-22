@@ -1,6 +1,7 @@
 ///
 //  eep.c
 //  SLAA208 updated for the MSPM0
+//  BSD 2-clause license
 //
 
 //  We don't include "ti_msp_dl_config.h" since main() takes care of all that

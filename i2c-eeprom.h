@@ -1,5 +1,6 @@
 //
 //  eep.h
+//  BSD 2-Clause license
 //
 #ifndef I2C_EEPROM_H_
 #define I2C_EEPROM_H_ 1
