@@ -13,6 +13,14 @@ Polling  (busy-waiting) is used rather than interrupts. This is because only sys
 This was tested using a CAT24C512 and an AT24C256. Both of these use 2-byte addresses.
 To use a smaller device, e.g. AT24C02 (1-byte address), change the definitions of eep_addr and EEP_PAGESIZE accordingly.
 
+## DMA
+If EEP_DMA=1, an alternate initialization InitI2C_DMA() may be called with a 3rd argument which is a DMA channel number.
+
+This channel should be configured in Sysconfig to use the (appropriate) I2C trigger. 
+Choose the DMA_I2Cn_TX_TRIG [sic] option, which actually refers to the DMA_TRIG1 publisher, not to anything about TX. 
+
+The other DMA channel configuration is overwritten.
+
 ## Peripherals & Pin Assignments
 
 | Peripheral | Pin | Function |

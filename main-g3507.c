@@ -1,5 +1,9 @@
 ///
 //  main.c
+//  Adopted (almost) directly from SLAA208.
+//
+//  Copyright Bruce McKenney 2025
+//  BSD 2-clause license
 //
 
 #include "ti_msp_dl_config.h"
@@ -17,8 +21,14 @@ main(void)
   unsigned int i;
 
   SYSCFG_DL_init();
-
+  DL_GPIO_setPins(GPIO_LEDS_PORT,
+                  GPIO_LEDS_USER_LED_1_PIN | GPIO_LEDS_USER_TEST_PIN);
+#if EEP_DMA
+  // We picked CH0 in Sysconfig
+  InitI2C_DMA(I2C_INST, SlaveAddress, DMA_CH0_CHAN_ID);          // Initialize I2C module
+#else
   InitI2C(I2C_INST, SlaveAddress);          // Initialize I2C module
+#endif // EEP_DMA
 
   EEPROM_ByteWrite(0x0000,0x12);
   EEPROM_AckPolling();                      // Wait for EEPROM write cycle

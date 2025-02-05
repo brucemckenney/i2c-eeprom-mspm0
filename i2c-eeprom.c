@@ -1,6 +1,7 @@
 ///
-//  eep.c
+//  i2c-eeprom.c
 //  SLAA208 updated for the MSPM0
+//  Copyright Bruce McKenney 2025
 //  BSD 2-clause license
 //
 
@@ -11,9 +12,9 @@
 
 #include "i2c-eeprom.h"
 
-#define ETRACE  0
+#define ETRACE  0       // I'm still suspicious of some of the MSR bits (but not today)
 #define ERRCNT  1
-#define RS_WA   1       // Workaround for RD_ON_TXEMPTY (driverlib)
+#define RS_WA   1       // Workaround for RD_ON_TXEMPTY (driverlib) hazard
 
 ///
 //  eep_param block
@@ -24,6 +25,9 @@ typedef struct _eep_params
 {
     I2C_Regs *ep_i2c;
     uint8_t ep_i2c_addr;    // Target (EEPROM) I2C address
+#if EEP_DMA
+    uint8_t ep_dma_chanid;
+#endif // EEP_DMA
 }eep_params;
 eep_params eep_param;
 eep_params * const eep = &eep_param;
@@ -43,9 +47,30 @@ InitI2C(I2C_Regs *i2cdev, unsigned char eeprom_i2c_address)
 {
     eep->ep_i2c = i2cdev;
     eep->ep_i2c_addr = eeprom_i2c_address;
+#if EEP_DMA
+    eep->ep_dma_chanid = EEP_DMA_NOCHAN;
+#endif // EEP_DMA
 
     return;
 }
+
+#if EEP_DMA
+void
+InitI2C_DMA(I2C_Regs *i2c, unsigned char eeprom_i2c_address, uint8_t chanid)
+{
+    eep->ep_i2c = i2c;
+    eep->ep_i2c_addr = eeprom_i2c_address;
+    eep->ep_dma_chanid = chanid;
+    if (chanid != EEP_DMA_NOCHAN)
+    {
+        // Clear out whatever Sysconfig set
+        DL_I2C_disableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1,    // DMA_TRIG1
+                           (DL_I2C_DMA_INTERRUPT_TARGET_RXFIFO_TRIGGER|DL_I2C_DMA_INTERRUPT_TARGET_RXFIFO_TRIGGER));
+    }
+
+    return;
+}
+#endif // EEP_DMA
 
 ///
 //  EEPROM_WaitIdle()
@@ -124,11 +149,25 @@ void
 EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size)
 {
     I2C_Regs *i2c = eep->ep_i2c;
+#if EEP_DMA
+    uint8_t dmachan = eep->ep_dma_chanid;
+#endif // EEP_DMA
 
     unsigned cnt = Size;
     unsigned char *ptr = Data;
     eep_addr addr = (eep_addr)Address;  // Wrap address as needed
 
+#if EEP_DMA
+    if (dmachan != EEP_DMA_NOCHAN)
+    {
+        DL_DMA_setDestAddr(DMA, dmachan, (uint32_t)&i2c->MASTER.MTXDATA);
+        DL_I2C_enableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_TXFIFO_TRIGGER);
+        DL_DMA_configTransfer(DMA, dmachan,
+                              DL_DMA_SINGLE_TRANSFER_MODE, DL_DMA_NORMAL_MODE,
+                              DL_DMA_WIDTH_BYTE, DL_DMA_WIDTH_BYTE,
+                              DL_DMA_ADDR_INCREMENT, DL_DMA_ADDR_UNCHANGED);// inc src, not dest
+   }
+#endif // EEP_DMA
     //  Fill pages until we run out of data.
     while (cnt > 0)
     {
@@ -151,9 +190,22 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_TX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));
         DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
             DL_I2C_CONTROLLER_DIRECTION_TX, sizeof(eep_addr)+fragsiz);  // Start
+#if EEP_DMA
+        if (dmachan != EEP_DMA_NOCHAN)
+        {
+            DL_DMA_setSrcAddr(DMA, dmachan, (uint32_t)ptr);
+            DL_DMA_setTransferSize(DMA, dmachan, fragsiz); // don't count what's already in the FIFO
+            DL_I2C_clearDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_TXFIFO_TRIGGER);
+            DL_DMA_enableChannel(DMA, dmachan); // Prime
+        }
+#endif // EEP_DMA
 
         //  Busy-wait for completion
         do {
+#if EEP_DMA
+            if (dmachan != EEP_DMA_NOCHAN)
+                continue;
+#endif // EEP_DMA
             // While waiting, try to keep the FIFO full.
             unsigned fillcnt;
             fillcnt = DL_I2C_fillControllerTXFIFO(i2c, ptr, fragcnt);
@@ -168,6 +220,12 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         //  Move forward
         addr += fragsiz;
         cnt -= fragsiz;
+#if EEP_DMA
+        if (dmachan != EEP_DMA_NOCHAN)
+        {
+            ptr += fragsiz;
+        }
+#endif // EEP_DMA
 
         // Wait for EEPROM update to complete (Twr)
         EEPROM_AckPolling();
@@ -175,6 +233,13 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
 
     //  Only needed in case of an error
     DL_I2C_flushControllerTXFIFO(i2c);
+#if EEP_DMA
+    if (dmachan != EEP_DMA_NOCHAN)
+    {
+        DL_I2C_disableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_TXFIFO_TRIGGER);
+        DL_DMA_disableChannel(DMA, dmachan);
+    }
+#endif // EEP_DMA
 
     return;
 }
@@ -253,6 +318,9 @@ void
 EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int Size)
 {
     I2C_Regs *i2c = eep->ep_i2c;
+#if EEP_DMA
+    uint8_t dmachan = eep->ep_dma_chanid;
+#endif // EEP_DMA
     unsigned i;
 
     EEPROM_WaitIdle(i2c);
@@ -271,6 +339,21 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
     DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_RX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));// Clear stale
     DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
                      DL_I2C_CONTROLLER_DIRECTION_RX, Size);   // Don't count the Tx FIFO contents
+#if EEP_DMA
+    if (dmachan != EEP_DMA_NOCHAN)
+    {
+        DL_DMA_setSrcAddr(DMA, dmachan, (uint32_t)&i2c->MASTER.MRXDATA);
+        DL_DMA_setDestAddr(DMA, dmachan, (uint32_t)Data);
+        DL_DMA_setTransferSize(DMA, dmachan, Size); // don't count what's in the Tx FIFO
+        DL_DMA_configTransfer(DMA, dmachan,
+                              DL_DMA_SINGLE_TRANSFER_MODE, DL_DMA_NORMAL_MODE,
+                              DL_DMA_WIDTH_BYTE, DL_DMA_WIDTH_BYTE,
+                              DL_DMA_ADDR_UNCHANGED,  DL_DMA_ADDR_INCREMENT);// inc dest, not src
+        DL_I2C_clearDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_RXFIFO_TRIGGER);
+        DL_I2C_enableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_RXFIFO_TRIGGER);
+        DL_DMA_enableChannel(DMA, dmachan); // Prime
+    }
+#endif // EEP_DMA
 #if ETRACE
     eep_sr_msr1 = DL_I2C_getControllerStatus(i2c);
     delay_cycles(10*32);
@@ -284,6 +367,10 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
         eep_sr_msr3 = DL_I2C_getControllerStatus(i2c);
         delay_cycles(1*32);
 #endif // ETRACE
+#if EEP_DMA
+        if (dmachan != EEP_DMA_NOCHAN)
+            continue;
+#endif // EEP_DMA
        //   While waiting, drain the Rx FIFO as needed
        i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
     } while(!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE));
@@ -291,7 +378,7 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
     //   One more Rx FIFO check to avoid a race.
     i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
 
-    #if ERRCNT
+#if ERRCNT
     if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
     { ++eep_errcnt; }
 #endif // ERRCNT
@@ -305,6 +392,13 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
 
     //  Only needed in case of an error
     DL_I2C_flushControllerTXFIFO(i2c);
+#if EEP_DMA
+    if (dmachan != EEP_DMA_NOCHAN)
+    {
+        DL_I2C_disableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_RXFIFO_TRIGGER);
+        DL_DMA_disableChannel(DMA, dmachan);
+    }
+#endif // EEP_DMA
 
     return;
 }
