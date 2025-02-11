@@ -11,7 +11,7 @@
 
 typedef uint16_t eep_addr;          // 16-bit addresses
 #define EEP_PAGESIZE    16          // Page size (from the data sheet); power of 2
-#define EEP_DMA         1
+#define EEP_DMA         0
 
 extern void InitI2C(I2C_Regs *i2cdev, unsigned char eeprom_i2c_address);
 extern void EEPROM_ByteWrite(unsigned int Address , unsigned char Data);

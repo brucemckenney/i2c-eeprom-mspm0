@@ -161,7 +161,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
     if (dmachan != EEP_DMA_NOCHAN)
     {
         DL_DMA_setDestAddr(DMA, dmachan, (uint32_t)&i2c->MASTER.MTXDATA);
-        DL_I2C_enableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_TXFIFO_TRIGGER);
+        DL_I2C_enableDMAEvent(i2c, DL_I2C_EVENT_ROUTE_1, DL_I2C_DMA_INTERRUPT_CONTROLLER_TXFIFO_TRIGGER); // DMA_TRIG1
         DL_DMA_configTransfer(DMA, dmachan,
                               DL_DMA_SINGLE_TRANSFER_MODE, DL_DMA_NORMAL_MODE,
                               DL_DMA_WIDTH_BYTE, DL_DMA_WIDTH_BYTE,
@@ -204,7 +204,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         do {
 #if EEP_DMA
             if (dmachan != EEP_DMA_NOCHAN)
-                continue;
+                continue;               // DMA is doing all the work
 #endif // EEP_DMA
             // While waiting, try to keep the FIFO full.
             unsigned fillcnt;
@@ -371,8 +371,8 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
         if (dmachan != EEP_DMA_NOCHAN)
             continue;
 #endif // EEP_DMA
-       //   While waiting, drain the Rx FIFO as needed
-       i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
+        //   While waiting, drain the Rx FIFO as needed
+        i = EEPROM_drainRxFIFO(i2c, i, Data, Size);
     } while(!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE));
 
     //   One more Rx FIFO check to avoid a race.
