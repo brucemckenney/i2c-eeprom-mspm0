@@ -94,11 +94,11 @@ EEPROM_WaitIdle(I2C_Regs *i2c)
 static inline void
 EEPROM_SetAddr(I2C_Regs *i2c, unsigned int addr)
 {
-    if (sizeof(eep_addr) > 3)
+    if (EEP_ADDRBITS > 24)
         DL_I2C_transmitControllerData(i2c, (addr >> 24) & 0xFF);
-    if (sizeof(eep_addr) > 2)
+    if (EEP_ADDRBITS > 16)
         DL_I2C_transmitControllerData(i2c, (addr >> 16) & 0xFF);
-    if (sizeof(eep_addr) > 1)
+    if (EEP_ADDRBITS >  8)
         DL_I2C_transmitControllerData(i2c, (addr >>  8) & 0xFF);
 
     DL_I2C_transmitControllerData(i2c, (addr >> 0) & 0xFF);
