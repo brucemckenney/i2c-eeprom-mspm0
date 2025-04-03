@@ -11,7 +11,7 @@ The code relies on DriverLib, but not sysconfig.
 Polling  (busy-waiting) is used rather than interrupts. This is because only sysconfig knows the ISR name.
 
 This was tested using a CAT24C512 and an AT24C256. Both of these use 2-byte addresses.
-To use a smaller device, e.g. AT24C02 (1-byte address), change the definitions of eep_addr and EEP_PAGESIZE accordingly.
+To use a smaller device, e.g. AT24C02 (1-byte address), change the definitions of EEP_ADDRBITS and EEP_PAGESIZE accordingly.
 
 ## DMA
 If EEP_DMA=1, an alternate initialization InitI2C_DMA() may be called with a 3rd argument which is a DMA channel number.
@@ -51,7 +51,10 @@ Visit [LP_MSPM0G3507](https://www.ti.com/tool/LP-MSPM0G3507) for LaunchPad infor
 
 This example was developed using an MSPM0G3507.
 
-The source code should operate unchanged on any of the G, L, or C series; sysconfig may be used to re-target.
+The source code should operate unchanged on any of the G, L, or C series; sysconfig may (in theory) be used to re-target.
+
+Truth be known, I've never succeeded in migrating to a new device using Sysconfig.
+The anticipated usage is to copy i2c-eeprom.[ch] into your application, which actually does something useful.
 
 ## Example Usage
 

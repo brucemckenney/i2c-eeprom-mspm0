@@ -1,5 +1,6 @@
 ///
 //  i2c-eeprom.c
+//  Revision 0.1.1
 //  SLAA208 updated for the MSPM0
 //  Copyright Bruce McKenney 2025
 //  BSD 2-clause license
@@ -12,7 +13,6 @@
 
 #include "i2c-eeprom.h"
 
-#define ETRACE  0       // I'm still suspicious of some of the MSR bits (but not today)
 #define ERRCNT  1
 #define RS_WA   1       // Workaround for RD_ON_TXEMPTY (driverlib) hazard
 
@@ -155,7 +155,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
 
     unsigned cnt = Size;
     unsigned char *ptr = Data;
-    eep_addr addr = (eep_addr)Address;  // Wrap address as needed
+    unsigned addr = Address;
 
 #if EEP_DMA
     if (dmachan != EEP_DMA_NOCHAN)
@@ -172,11 +172,12 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
     while (cnt > 0)
     {
         unsigned fragsiz, fragcnt;
-        eep_addr pagetop;
+        unsigned pagetop;
 
         //  See how much can fit into the requested page
         pagetop = (addr + EEP_PAGESIZE) & ~(EEP_PAGESIZE-1); // addr of next page
         fragsiz = pagetop - addr;       // Amount that can fit in this page
+        fragsiz &= EEP_ADDRMASK;
         if (fragsiz > cnt)              // Don't go overboard
             fragsiz = cnt;
         fragcnt = fragsiz;              // Prepare to count
@@ -189,7 +190,7 @@ EEPROM_PageWrite(unsigned int Address , unsigned char * Data , unsigned int Size
         //  Start the write for this fragment
         DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_TX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));
         DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
-            DL_I2C_CONTROLLER_DIRECTION_TX, sizeof(eep_addr)+fragsiz);  // Start
+            DL_I2C_CONTROLLER_DIRECTION_TX, ((EEP_ADDRBITS+7)/8)+fragsiz);  // Start
 #if EEP_DMA
         if (dmachan != EEP_DMA_NOCHAN)
         {
@@ -258,9 +259,6 @@ EEPROM_RandomRead(unsigned int Address)
     return(dat[0]);
 }
 
-#if ETRACE
-uint32_t eep_car_msr1, eep_car_msr2,eep_car_msr3;
-#endif // ETRACE
 ///
 //  EEPROM_CurrentAddressRead()
 //
@@ -277,30 +275,19 @@ EEPROM_CurrentAddressRead(void)
 
     //  Start the Rx transaction
     DL_I2C_clearInterruptStatus(i2c, (DL_I2C_INTERRUPT_CONTROLLER_RX_DONE|DL_I2C_INTERRUPT_CONTROLLER_NACK));// Clear stale
-    DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr,
-        DL_I2C_CONTROLLER_DIRECTION_RX, sizeof(dat));
-#if ETRACE
-    eep_car_msr1 = DL_I2C_getControllerStatus(i2c);
-    delay_cycles(10*32);
-    eep_car_msr2 = DL_I2C_getControllerStatus(i2c);
-#endif // ETRACE
+    DL_I2C_startControllerTransfer(i2c, eep->ep_i2c_addr, DL_I2C_CONTROLLER_DIRECTION_RX, sizeof(dat));
 
     //  Busy-wait for it to complete. A single byte fits in the FIFO.
     i = 0;
     do
     {
-#if ETRACE
-        eep_car_msr3 = DL_I2C_getControllerStatus(i2c);
-        delay_cycles(1*32);
-#else
         /*EMPTY*/;
-#endif // ETRACE
     } while(!DL_I2C_getRawInterruptStatus(i2c, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE));
 
     //  Retrieve the result
     i = EEPROM_drainRxFIFO(i2c, i, dat, sizeof(dat));
 
-    #if ERRCNT
+#if ERRCNT
     if ((DL_I2C_getControllerStatus(i2c) & DL_I2C_CONTROLLER_STATUS_ERROR))
     { ++eep_errcnt; }
 #endif // ERRCNT
@@ -308,9 +295,6 @@ EEPROM_CurrentAddressRead(void)
     return(dat[0]);
 }
 
-#if ETRACE
-uint32_t eep_sr_msr1, eep_sr_msr2,eep_sr_msr3;
-#endif // ETRACE
 ///
 //  EEPROM_SequentialRead()
 //
@@ -354,19 +338,10 @@ EEPROM_SequentialRead(unsigned int Address , unsigned char * Data , unsigned int
         DL_DMA_enableChannel(DMA, dmachan); // Prime
     }
 #endif // EEP_DMA
-#if ETRACE
-    eep_sr_msr1 = DL_I2C_getControllerStatus(i2c);
-    delay_cycles(10*32);
-    eep_sr_msr2 = DL_I2C_getControllerStatus(i2c);
-#endif // ETRACE
 
     //   Busy-wait for completion
     i = 0;
     do {
-#if ETRACE
-        eep_sr_msr3 = DL_I2C_getControllerStatus(i2c);
-        delay_cycles(1*32);
-#endif // ETRACE
 #if EEP_DMA
         if (dmachan != EEP_DMA_NOCHAN)
             continue;

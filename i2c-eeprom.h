@@ -1,6 +1,7 @@
 //
 //  i2c-eeprom.h
-//
+//  Revision 0.1.1
+//  SLAA208 updated for the MSPM0
 //  Copyright Bruce McKenney 2025
 //  BSD 2-Clause license
 //
@@ -10,7 +11,7 @@
 #include <stdint.h>
 
 #define EEP_ADDRBITS    16
-typedef uint16_t eep_addr;          // 16-bit addresses
+#define EEP_ADDRMASK    ((1ul << EEP_ADDRBITS)-1)
 #define EEP_PAGESIZE    16          // Page size (from the data sheet); power of 2
 #define EEP_DMA         0
 
